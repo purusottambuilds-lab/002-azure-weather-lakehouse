@@ -75,10 +75,8 @@ Location: Bhubaneswar, Odisha, India (lat: 20.29, lon: 85.82)
 ## Repository Structure
 ```
 notebooks/      -- PySpark transformation scripts (.py)
-01_bronze_to_silver.py
-02_silver_to_gold.py
-03_weather_insights.py
 adf-pipelines/  -- ADF pipeline JSON definitions
+data/           -- Sample data
 docs/           -- Architecture screenshots
 README.md       -- This file
 ```
