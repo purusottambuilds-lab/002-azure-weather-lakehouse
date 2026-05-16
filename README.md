@@ -6,6 +6,7 @@ every hour, processes it through Medallion Architecture (Bronze/Silver/Gold)
 using PySpark in Azure Databricks, and produces daily aggregated analytics —
 fully automated via Azure Data Factory.
 
+---
 
 ## Architecture
 ```
@@ -40,18 +41,19 @@ v
 GOLD Layer — ADLS Gen2 (Delta format)
 Daily analytics ready for BI/reporting
 ```
-
+---
 
 ## Tech Stack
 | Tool | Purpose |
 |------|---------|
-| Azure Data Factory V2 | API ingestion & hourly orchestration |
+| Azure Data Factory | API ingestion & hourly orchestration |
 | Open-Meteo API | Free real-time weather data (no key needed) |
 | Azure Data Lake Storage Gen2 | Bronze / Silver / Gold layers |
 | Azure Databricks + PySpark | Layer-by-layer transformations |
 | Delta Lake | All layers stored as Delta format |
 | Python / SQL | Scripting & querying |
 
+---
 
 ## Key Features
 - Hourly automated API ingestion via ADF Web Activity + Schedule Trigger
@@ -61,12 +63,14 @@ Daily analytics ready for BI/reporting
 - Gold layer: daily summaries ready for BI/reporting consumption
 - Error handling and monitoring via ADF Monitor
 
+---
 
 ## Data Source
 Open-Meteo (open-meteo.com)
 Free, no API key, no rate limits
 Location: Bhubaneswar, Odisha, India (lat: 20.29, lon: 85.82)
 
+---
 
 ## Repository Structure
 ```
@@ -78,3 +82,5 @@ adf-pipelines/  -- ADF pipeline JSON definitions
 docs/           -- Architecture screenshots
 README.md       -- This file
 ```
+
+---
