@@ -1,0 +1,313 @@
+{
+    "name": "pl_002_weather_lakehouse",
+    "properties": {
+        "description": "Hourly multi-city weather pipeline - Medallion Architecture with anomaly detection and rolling windows analytics",
+        "activities": [
+            {
+                "name": "IterateCities",
+                "description": "Parallel API call and bronze save for all 4 cities",
+                "type": "ForEach",
+                "dependsOn": [],
+                "userProperties": [],
+                "typeProperties": {
+                    "items": {
+                        "value": "@pipeline().parameters.city_configs",
+                        "type": "Expression"
+                    },
+                    "batchCount": 4,
+                    "activities": [
+                        {
+                            "name": "FetchCityWeather",
+                            "type": "WebActivity",
+                            "dependsOn": [],
+                            "policy": {
+                                "timeout": "0.12:00:00",
+                                "retry": 0,
+                                "retryIntervalInSeconds": 30,
+                                "secureOutput": false,
+                                "secureInput": false
+                            },
+                            "userProperties": [],
+                            "typeProperties": {
+                                "method": "GET",
+                                "url": {
+                                    "value": "@{concat(\n  'https://api.open-meteo.com/v1/forecast',\n  '?latitude=',  item().latitude,\n  '&longitude=', item().longitude,\n  '&hourly=temperature_2m,precipitation,windspeed_10m,weathercode,relativehumidity_2m,apparent_temperature',\n  '&daily=temperature_2m_max,temperature_2m_min,precipitation_sum',\n  '&timezone=',  item().timezone,\n  '&forecast_days=1'\n)}\n",
+                                    "type": "Expression"
+                                }
+                            }
+                        },
+                        {
+                            "name": "SaveToBronze",
+                            "type": "Copy",
+                            "dependsOn": [
+                                {
+                                    "activity": "FetchCityWeather",
+                                    "dependencyConditions": [
+                                        "Succeeded"
+                                    ]
+                                }
+                            ],
+                            "policy": {
+                                "timeout": "0.12:00:00",
+                                "retry": 0,
+                                "retryIntervalInSeconds": 30,
+                                "secureOutput": false,
+                                "secureInput": false
+                            },
+                            "userProperties": [],
+                            "typeProperties": {
+                                "source": {
+                                    "type": "JsonSource",
+                                    "storeSettings": {
+                                        "type": "HttpReadSettings",
+                                        "requestMethod": "GET"
+                                    },
+                                    "formatSettings": {
+                                        "type": "JsonReadSettings"
+                                    }
+                                },
+                                "sink": {
+                                    "type": "JsonSink",
+                                    "storeSettings": {
+                                        "type": "AzureBlobFSWriteSettings",
+                                        "copyBehavior": "PreserveHierarchy"
+                                    },
+                                    "formatSettings": {
+                                        "type": "JsonWriteSettings"
+                                    }
+                                },
+                                "enableStaging": false
+                            },
+                            "inputs": [
+                                {
+                                    "referenceName": "ds_002_weather_api",
+                                    "type": "DatasetReference"
+                                }
+                            ],
+                            "outputs": [
+                                {
+                                    "referenceName": "ds_002_bronze_sink",
+                                    "type": "DatasetReference"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            },
+            {
+                "name": "BronzeToSilver",
+                "description": "Flatten JSON, anomaly detection, append Silver Delta",
+                "type": "DatabricksNotebook",
+                "dependsOn": [
+                    {
+                        "activity": "IterateCities",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "notebookPath": "/Users/purusottam.builds@gmail.com/dir_002_weather_lakehouse/nb_01_bronze_to_silver",
+                    "baseParameters": {
+                        "run_date": {
+                            "value": "@{formatDateTime(utcNow(),'yyyy-MM-dd-HH')}",
+                            "type": "Expression"
+                        },
+                        "city_list": {
+                            "value": "@{pipeline().parameters.city_list}",
+                            "type": "Expression"
+                        }
+                    }
+                },
+                "linkedServiceName": {
+                    "referenceName": "ls_databricks",
+                    "type": "LinkedServiceReference"
+                }
+            },
+            {
+                "name": "SilverToGold",
+                "type": "DatabricksNotebook",
+                "dependsOn": [
+                    {
+                        "activity": "BronzeToSilver",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "notebookPath": "/Users/purusottam.builds@gmail.com/dir_002_weather_lakehouse/nb_02_silver_to_gold",
+                    "baseParameters": {
+                        "run_date": {
+                            "value": "@{formatDateTime(utcNow(),'yyyy-MM-dd-HH')}",
+                            "type": "Expression"
+                        }
+                    }
+                },
+                "linkedServiceName": {
+                    "referenceName": "ls_databricks",
+                    "type": "LinkedServiceReference"
+                }
+            },
+            {
+                "name": "GoldToSQL",
+                "type": "DatabricksNotebook",
+                "dependsOn": [
+                    {
+                        "activity": "SilverToGold",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "notebookPath": "/Users/purusottam.builds@gmail.com/dir_002_weather_lakehouse/nb_03_gold_to_sql"
+                },
+                "linkedServiceName": {
+                    "referenceName": "ls_databricks",
+                    "type": "LinkedServiceReference"
+                }
+            },
+            {
+                "name": "SendFailureAlert",
+                "type": "WebActivity",
+                "dependsOn": [
+                    {
+                        "activity": "IterateCities",
+                        "dependencyConditions": [
+                            "Failed"
+                        ]
+                    },
+                    {
+                        "activity": "BronzeToSilver",
+                        "dependencyConditions": [
+                            "Failed"
+                        ]
+                    },
+                    {
+                        "activity": "SilverToGold",
+                        "dependencyConditions": [
+                            "Failed"
+                        ]
+                    },
+                    {
+                        "activity": "GoldToSQL",
+                        "dependencyConditions": [
+                            "Failed"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "method": "POST",
+                    "url": "https://prod-18.southindia.logic.azure.com:443/workflows/bf05dfc8141148b89453b435b57b0b62/triggers/When_an_HTTP_request_is_received/paths/invoke?api-version=2016-10-01&sp=%2Ftriggers%2FWhen_an_HTTP_request_is_received%2Frun&sv=1.0&sig=vJ4MdTz2SoZEg_Y_s4TpQzHDEh2vuplx2oqF86gSJeg",
+                    "body": {
+                        "value": "{\n  \"status\"   : \"FAILED\",\n  \"pipeline\" : \"@{pipeline().Pipeline}\",\n  \"message\"  : \"Weather Lakehouse pipeline failed !!! — check ADF Monitor for details\",\n  \"runId\"    : \"@{pipeline().RunId}\"\n}\n",
+                        "type": "Expression"
+                    }
+                }
+            },
+            {
+                "name": "SendSuccessNotification",
+                "type": "WebActivity",
+                "dependsOn": [
+                    {
+                        "activity": "GoldToSQL",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "method": "POST",
+                    "url": "https://prod-18.southindia.logic.azure.com:443/workflows/bf05dfc8141148b89453b435b57b0b62/triggers/When_an_HTTP_request_is_received/paths/invoke?api-version=2016-10-01&sp=%2Ftriggers%2FWhen_an_HTTP_request_is_received%2Frun&sv=1.0&sig=vJ4MdTz2SoZEg_Y_s4TpQzHDEh2vuplx2oqF86gSJeg",
+                    "body": {
+                        "value": "{\n  \"status\"   : \"SUCCEED\",\n  \"pipeline\" : \"@{pipeline().Pipeline}\",\n  \"message\"  : \"Weather Lakehouse pipeline completed successfully — check ADF Monitor for details\",\n  \"runId\"    : \"@{pipeline().RunId}\"\n}\n",
+                        "type": "Expression"
+                    }
+                }
+            }
+        ],
+        "parameters": {
+            "run_date": {
+                "type": "string",
+                "defaultValue": "@{formatDateTime(utcNow(),'yyyy-MM-dd-HH')}"
+            },
+            "city_configs": {
+                "type": "array",
+                "defaultValue": [
+                    {
+                        "city_name": "Bhubaneswar",
+                        "latitude": "20.29",
+                        "longitude": "85.82",
+                        "timezone": "Asia%2FKolkata"
+                    },
+                    {
+                        "city_name": "Delhi",
+                        "latitude": "28.61",
+                        "longitude": "77.21",
+                        "timezone": "Asia%2FKolkata"
+                    },
+                    {
+                        "city_name": "Mumbai",
+                        "latitude": "19.08",
+                        "longitude": "72.88",
+                        "timezone": "Asia%2FKolkata"
+                    },
+                    {
+                        "city_name": "Bangalore",
+                        "latitude": "12.97",
+                        "longitude": "77.59",
+                        "timezone": "Asia%2FKolkata"
+                    }
+                ]
+            },
+            "city_list": {
+                "type": "string",
+                "defaultValue": "Bhubaneswar,Delhi,Mumbai,Bangalore"
+            }
+        },
+        "annotations": [],
+        "lastPublishTime": "2026-05-24T12:05:49Z"
+    },
+    "type": "Microsoft.DataFactory/factories/pipelines"
+}
