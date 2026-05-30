@@ -1,35 +1,37 @@
 # Databricks notebook source
 # ================================================================
 # nb_01_bronze_to_silver
-# Project_002: Real-Time Weather Data Lakehouse
-# Purpose: Read bronze JSON for all cities, flatten hourly arrays, detect anomalies, append to silver Delta Lake
-# Author: Purusottam Swain | purusottam.builds@gmail.com
+# Project 002   : Real-Time Weather Data Lakehouse
+# Purpose       : Read bronze JSON for all cities, flatten hourly arrays, detect anomalies, append to Silver Delta Lake
+# Folder        : dir_002_weather_lakehouse
+# Author        : Purusottam Swain | purusottam.builds@gmail.com
 # ================================================================
 
 # COMMAND ----------
 
-# cell-1: read parameters passed from ADF
+# CELL 1 - Read Parameters Passed from ADF
 
 dbutils.widgets.text(
     "run_date", ""
-)  # ADF passed: @{formatDateTime(utcNow(), 'yyyy-MM-dd-HH')}
+)  # ADF passes: @{formatDateTime(utcNow(),'yyyy-MM-dd-HH')}
 dbutils.widgets.text("city_list", "Bhubaneswar,Delhi,Mumbai,Bangalore")
 
 run_date = dbutils.widgets.get("run_date")
 city_list = dbutils.widgets.get("city_list").split(",")
 
-# fallback for manual runs (when ADF has not passed run_date)
+# Fallback for manual runs — ADF always provides run_date so fallback never triggers in pipeline
 if not run_date:
     from datetime import datetime
 
     run_date = datetime.now().strftime("%Y-%m-%d-%H")
 
-print(f"Run date/hour: {run_date}")
-print(f"Cities: {city_list}")
+print(f"Run date/hour : {run_date}")
+print(f"Cities        : {city_list}")
+
 
 # COMMAND ----------
 
-# cell-2: storage configuration
+# CELL 2 - Storage Configuration
 
 from pyspark.sql.functions import (
     col,
@@ -41,18 +43,15 @@ from pyspark.sql.functions import (
     when,
     avg,
     abs as spark_abs,
-    date_sub,
-    current_date,
 )
 from pyspark.sql.types import DoubleType, IntegerType
-from pyspark.sql import window
+from pyspark.sql import Window
 from datetime import datetime
 from functools import reduce
 from pyspark.sql import DataFrame
-import json
 
 storage_account_name = "saweatherps01"
-storage_account_key = "YOUR_STORAGE_KEY_HERE"
+storage_account_key = "YOUR_STORAGE_ACCOUNT_KEY_HERE"
 
 spark.conf.set(
     f"fs.azure.account.key.{storage_account_name}.dfs.core.windows.net",
@@ -66,9 +65,13 @@ silver_path = (
 
 print(f"Storage configured: {storage_account_name}")
 
+
 # COMMAND ----------
 
-# cell-3: real bronze JSON for all cities
+# CELL 3 - Read Bronze JSON for All Cities
+
+# ADF ForEach saves bronze files at:
+#       bronze/{city_name}/{yyyy-MM-dd-HH}/weather_raw.json
 
 all_city_dfs = []
 
@@ -79,6 +82,7 @@ for city_name in city_list:
     try:
         df_raw = spark.read.option("multiline", "true").json(bronze_path)
 
+        # Flatten nested hourly arrays into individual rows
         df_hourly = df_raw.select(
             col("latitude"),
             col("longitude"),
@@ -112,23 +116,24 @@ for city_name in city_list:
         )
 
         all_city_dfs.append(df_city)
-        print(f" {city_name}: {df_city.count()} hourly recordds loaded")
+        print(f"  {city_name}: {df_city.count()} hourly records loaded")
 
     except Exception as e:
-        print(f" Warning: Could not read {city_name} -- {str(e)[:120]}")
-        print(f" Skipping {city_name} for this run")
+        print(f"  WARNING: Could not read {city_name} -- {str(e)[:120]}")
+        print(f"  Skipping {city_name} for this run")
 
 if not all_city_dfs:
     raise Exception(
-        "No city data could be read. verify ADF ForEach ran successfully first."
+        "No city data could be read. Verify ADF ForEach ran successfully first."
     )
 
 df_all = reduce(DataFrame.union, all_city_dfs)
 print(f"Total records across all cities: {df_all.count()}")
 
+
 # COMMAND ----------
 
-# cell-4: Clean and Type-Cast
+# CELL 4 - Clean and Type-Cast
 
 df_clean = (
     df_all.na.drop(subset=["temperature_celsius", "city_name"])
@@ -144,21 +149,19 @@ df_clean = (
 print(f"Clean records: {df_clean.count()}")
 display(df_clean.limit(5))
 
+
 # COMMAND ----------
 
-# cell-5: Weather Anomaly Detection
+# CELL 5 - Weather Anomaly Detection
 
-# Anomaly conditions:
-#   TEMPERATURE_SPIKE: temp deviates > 5c from city 7-day rolling average
-#   HIGH_WIND: windspeed > 80kmph
-#   HEAVY_RAIN: precipitation > 50mm in one hour
+# TEMPERATURE_SPIKE : temp deviates > 5C from city 7-day rolling average
+# HIGH_WIND         : windspeed > 80 kmph
+# HEAVY_RAIN        : precipitation > 50 mm in one hour
 
 try:
-    df_existing = spark.read.format("delta").load(
-        silver_path
-    )  # Ensure 'silver_path' has a supported scheme like 'dbfs:', 's3a:', or 'abfss:'
+    df_existing = spark.read.format("delta").load(silver_path)
+    from pyspark.sql.functions import date_sub, current_date
 
-    # calculate 7-day rolling average temperature per city
     city_avg = (
         df_existing.filter(col("datetime_ts") >= date_sub(current_date(), 7))
         .groupBy("city_name")
@@ -194,15 +197,15 @@ try:
     print(f"Anomalies detected this run: {anomaly_count}")
 
 except Exception as e:
-    print(f"First run or no baseline - Anomaly detection skipped: {str(e)[:80]}")
-
+    print(f"First run or no baseline — anomaly detection skipped: {str(e)[:80]}")
     df_anomaly = df_clean.withColumn("is_anomaly", lit(False)).withColumn(
         "anomaly_reason", lit(None).cast("string")
     )
 
+
 # COMMAND ----------
 
-# cell-6: append to silver Delta Lake
+# CELL 6 - Append to Silver Delta Lake
 
 df_anomaly.write.format("delta").mode("append").option("mergeSchema", "true").save(
     silver_path
@@ -212,9 +215,11 @@ total_silver = spark.read.format("delta").load(silver_path).count()
 print(f"Silver layer total records after this run: {total_silver}")
 display(df_anomaly.groupBy("city_name", "is_anomaly").count())
 
+
 # COMMAND ----------
 
-# cell-7: return status ADF
+# CELL 7 - Return Status to ADF
+import json
 
 exit_value = json.dumps(
     {
@@ -224,7 +229,7 @@ exit_value = json.dumps(
         "cities": city_list,
     }
 )
-
 dbutils.notebook.exit(exit_value)
+
 
 # COMMAND ----------

@@ -1,7 +1,7 @@
 {
     "name": "pl_002_weather_lakehouse",
     "properties": {
-        "description": "Hourly multi-city weather pipeline - Medallion Architecture with anomaly detection and rolling windows analytics",
+        "description": "Hourly multi-city weather pipeline - Medallion Architecture (Bronze/Silver/Gold) with anomaly detection and rolling window analytics",
         "activities": [
             {
                 "name": "IterateCities",
@@ -81,13 +81,25 @@
                             "inputs": [
                                 {
                                     "referenceName": "ds_002_weather_api",
-                                    "type": "DatasetReference"
+                                    "type": "DatasetReference",
+                                    "parameters": {
+                                        "relative_url": {
+                                            "value": "@{concat(\n  '/v1/forecast',\n  '?latitude=',  item().latitude,\n  '&longitude=', item().longitude,\n  '&hourly=temperature_2m,precipitation,windspeed_10m,weathercode,relativehumidity_2m,apparent_temperature',\n  '&daily=temperature_2m_max,temperature_2m_min,precipitation_sum',\n  '&timezone=',  item().timezone,\n  '&forecast_days=1'\n)}",
+                                            "type": "Expression"
+                                        }
+                                    }
                                 }
                             ],
                             "outputs": [
                                 {
                                     "referenceName": "ds_002_bronze_sink",
-                                    "type": "DatasetReference"
+                                    "type": "DatasetReference",
+                                    "parameters": {
+                                        "folder_path": {
+                                            "value": "@{concat(item().city_name,'/',formatDateTime(utcNow(),'yyyy-MM-dd-HH'))}",
+                                            "type": "Expression"
+                                        }
+                                    }
                                 }
                             ]
                         }
@@ -117,14 +129,8 @@
                 "typeProperties": {
                     "notebookPath": "/Users/purusottam.builds@gmail.com/dir_002_weather_lakehouse/nb_01_bronze_to_silver",
                     "baseParameters": {
-                        "run_date": {
-                            "value": "@{formatDateTime(utcNow(),'yyyy-MM-dd-HH')}",
-                            "type": "Expression"
-                        },
-                        "city_list": {
-                            "value": "@{pipeline().parameters.city_list}",
-                            "type": "Expression"
-                        }
+                        "run_date": "@{formatDateTime(utcNow(),'yyyy-MM-dd-HH')}",
+                        "city_list": "@{pipeline().parameters.city_list}"
                     }
                 },
                 "linkedServiceName": {
@@ -154,10 +160,7 @@
                 "typeProperties": {
                     "notebookPath": "/Users/purusottam.builds@gmail.com/dir_002_weather_lakehouse/nb_02_silver_to_gold",
                     "baseParameters": {
-                        "run_date": {
-                            "value": "@{formatDateTime(utcNow(),'yyyy-MM-dd-HH')}",
-                            "type": "Expression"
-                        }
+                        "run_date": "@{formatDateTime(utcNow(),'yyyy-MM-dd-HH')}"
                     }
                 },
                 "linkedServiceName": {
@@ -190,6 +193,37 @@
                 "linkedServiceName": {
                     "referenceName": "ls_databricks",
                     "type": "LinkedServiceReference"
+                }
+            },
+            {
+                "name": "SendSuccessNotification",
+                "type": "WebActivity",
+                "dependsOn": [
+                    {
+                        "activity": "GoldToSQL",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "method": "POST",
+                    "url": {
+                        "value": "https://prod-01.centralindia.logic.azure.com:443/workflows/ec375a60de8e4ddd997e5dbf32037d01/triggers/When_an_HTTP_request_is_received/paths/invoke?api-version=2016-10-01&sp=%2Ftriggers%2FWhen_an_HTTP_request_is_received%2Frun&sv=1.0&sig=3klC2JC9Fm6ljhnssRQV7LrqhqC95rLhMeFd1YgBDHw",
+                        "type": "Expression"
+                    },
+                    "body": {
+                        "value": "{\n  \"status\"   : \"SUCCESS\",\n  \"pipeline\" : \"@{pipeline().Pipeline}\",\n  \"message\"  : \"Weather Lakehouse pipeline completed successfully\",\n  \"runId\"    : \"@{pipeline().RunId}\"\n}",
+                        "type": "Expression"
+                    }
                 }
             },
             {
@@ -231,37 +265,12 @@
                 "userProperties": [],
                 "typeProperties": {
                     "method": "POST",
-                    "url": "https://prod-18.southindia.logic.azure.com:443/workflows/bf05dfc8141148b89453b435b57b0b62/triggers/When_an_HTTP_request_is_received/paths/invoke?api-version=2016-10-01&sp=%2Ftriggers%2FWhen_an_HTTP_request_is_received%2Frun&sv=1.0&sig=vJ4MdTz2SoZEg_Y_s4TpQzHDEh2vuplx2oqF86gSJeg",
-                    "body": {
-                        "value": "{\n  \"status\"   : \"FAILED\",\n  \"pipeline\" : \"@{pipeline().Pipeline}\",\n  \"message\"  : \"Weather Lakehouse pipeline failed !!! — check ADF Monitor for details\",\n  \"runId\"    : \"@{pipeline().RunId}\"\n}\n",
+                    "url": {
+                        "value": "https://prod-01.centralindia.logic.azure.com:443/workflows/ec375a60de8e4ddd997e5dbf32037d01/triggers/When_an_HTTP_request_is_received/paths/invoke?api-version=2016-10-01&sp=%2Ftriggers%2FWhen_an_HTTP_request_is_received%2Frun&sv=1.0&sig=3klC2JC9Fm6ljhnssRQV7LrqhqC95rLhMeFd1YgBDHw",
                         "type": "Expression"
-                    }
-                }
-            },
-            {
-                "name": "SendSuccessNotification",
-                "type": "WebActivity",
-                "dependsOn": [
-                    {
-                        "activity": "GoldToSQL",
-                        "dependencyConditions": [
-                            "Succeeded"
-                        ]
-                    }
-                ],
-                "policy": {
-                    "timeout": "0.12:00:00",
-                    "retry": 0,
-                    "retryIntervalInSeconds": 30,
-                    "secureOutput": false,
-                    "secureInput": false
-                },
-                "userProperties": [],
-                "typeProperties": {
-                    "method": "POST",
-                    "url": "https://prod-18.southindia.logic.azure.com:443/workflows/bf05dfc8141148b89453b435b57b0b62/triggers/When_an_HTTP_request_is_received/paths/invoke?api-version=2016-10-01&sp=%2Ftriggers%2FWhen_an_HTTP_request_is_received%2Frun&sv=1.0&sig=vJ4MdTz2SoZEg_Y_s4TpQzHDEh2vuplx2oqF86gSJeg",
+                    },
                     "body": {
-                        "value": "{\n  \"status\"   : \"SUCCEED\",\n  \"pipeline\" : \"@{pipeline().Pipeline}\",\n  \"message\"  : \"Weather Lakehouse pipeline completed successfully — check ADF Monitor for details\",\n  \"runId\"    : \"@{pipeline().RunId}\"\n}\n",
+                        "value": "{\n  \"status\"   : \"FAILED\",\n  \"pipeline\" : \"@{pipeline().Pipeline}\",\n  \"message\"  : \"Weather Lakehouse pipeline failed — check ADF Monitor for details\",\n  \"runId\"    : \"@{pipeline().RunId}\"\n}\n",
                         "type": "Expression"
                     }
                 }
@@ -306,8 +315,6 @@
                 "defaultValue": "Bhubaneswar,Delhi,Mumbai,Bangalore"
             }
         },
-        "annotations": [],
-        "lastPublishTime": "2026-05-24T12:05:49Z"
-    },
-    "type": "Microsoft.DataFactory/factories/pipelines"
+        "annotations": []
+    }
 }
